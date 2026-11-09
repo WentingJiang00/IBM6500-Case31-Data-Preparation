@@ -1,0 +1,528 @@
+---
+title: "Data Preparation Assignment"
+subtitle: "Case 31: Employees Federal Credit Union"
+author: " Wenting Jiang "
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-expand: 2
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-overflow: wrap
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+## Files and software {.unnumbered}
+
+The report uses the following course files in the same folder as this QMD document:
+
+- `Case 31 Data_efcu_1.sav`
+- `Case 31 - Employees Federal Credit Union.PDF`
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+library(haven)
+library(labelled)
+library(janitor)
+library(psych)
+library(skimr)
+library(gt)
+
+theme_set(theme_minimal(base_size = 12))
+```
+
+## Measurement scales {.unnumbered}
+
+The questionnaire has several kinds of measurement scales. The table below shows how I understood them for this assignment.
+
+| Scale | Case 31 example | Analytical treatment |
+|---|---|---|
+| Nominal | q38: headquarters area, yes/no | Frequencies or proportions |
+| Ordered categories | q13-q26: used, aware but not used, unaware | Category distributions; no automatic averaging |
+| Ordinal rating | q7, q8, q10, q37 | Preserve order; reverse when a consistent direction is needed |
+| Likert-type rating | q3-q6 and q30-q34 | Inspect individually; may support a mean index when reliability and meaning agree |
+
+## Import and inspect the SPSS data
+
+`read_sav()` retains SPSS variable labels and value labels. With its default `user_na = FALSE`, user-defined missing codes are converted to ordinary `NA` values.
+
+```{r}
+#| label: import
+
+data_raw <- read_sav("Case 31 Data_efcu_1.sav")
+
+tibble(
+  rows = nrow(data_raw),
+  columns = ncol(data_raw)
+) |>
+  gt() |>
+  tab_header(title = "Imported data dimensions")
+```
+
+```{r}
+#| label: variable-names
+
+tibble(
+  position = seq_along(data_raw),
+  variable = names(data_raw)
+) |>
+  gt() |>
+  tab_header(title = "Variables in the source file")
+```
+
+### Questions and answers
+
+The file has **128 rows and 34 columns**. Most variable names start with `q`, so they appear to be questionnaire items. `OverallEmployeePerformace` and `employeeperformance` look like variables that were already calculated before I received the file.
+
+A **variable label** tells me what the whole variable measures. A **value label** tells me what each number means. For example, q7 is about savings rates, while its values range from 1 = "Very High" to 5 = "Very Low."
+
+```{r}
+#| label: missing-raw
+
+missing_raw <- data_raw |>
+  summarise(across(everything(), \(x) sum(is.na(x)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "n_missing") |>
+  filter(n_missing > 0) |>
+  mutate(percent_missing = round(100 * n_missing / nrow(data_raw), 1))
+
+missing_raw |>
+  gt() |>
+  fmt_number(columns = percent_missing, decimals = 1) |>
+  cols_label(percent_missing = "Missing (%)") |>
+  tab_header(title = "Variables containing missing values")
+```
+
+Only q7, q8, and q37 have missing values. They have 10, 21, and 7 missing cases. I think these came from the "No Opinion" or "No answer" choices because SPSS changed those special missing codes to `NA` when the file was imported.
+
+## Create a data dictionary
+
+```{r}
+#| label: dictionary
+
+make_dictionary <- function(df) {
+  tibble(
+    variable = names(df),
+    variable_label = map_chr(df, \(x) attr(x, "label") %||% ""),
+    class = map_chr(df, \(x) class(x)[1]),
+    n_distinct = map_int(df, n_distinct),
+    value_labels = map_chr(
+      df,
+      \(x) {
+        labs <- attr(x, "labels")
+        if (is.null(labs)) "" else str_c(names(labs), "=", unname(labs), collapse = "; ")
+      }
+    )
+  )
+}
+
+data_dictionary <- make_dictionary(data_raw)
+
+data_dictionary |>
+  gt() |>
+  tab_header(title = "Source data dictionary") |>
+  tab_options(table.font.size = px(12))
+```
+
+### Questions and answers
+
+Most labels are understandable, but a few are confusing. The clearest problem is q8. It has the same "statement frequency" label as q9, but the questionnaire shows that q8 is actually about borrowing rates. q38 also needs a clearer label about living in the headquarters area. Some labels use different capitalization, but this does not change the data.
+
+My classifications are:
+
+- q38 is nominal because the codes distinguish yes and no without an order.
+- q13-q26 are categorical responses describing product use or awareness. They have a practical progression, but the distance between categories is not measurable.
+- q7, q8, q10, and q37 are ordinal ratings. Their categories are ordered, but the steps are not guaranteed to be equal.
+- q3-q6 and q30-q34 are five-point Likert-type ratings. They remain ordinal item by item, but a mean of a coherent multi-item measure may be treated as approximately interval.
+
+Value labels are especially important for q9 and q13-q26 because the numbers are not easy to understand by themselves. The agreement scales are more predictable, but I still filled in all five labels so the data are easier to read.
+
+## Improve metadata using the case coding instructions
+
+The questionnaire coding exhibit defines the intended scales.
+
+| Response scale | Coding |
+|---|---|
+| Strongly disagree to strongly agree | 1 to 5 |
+| Very high to very low | 1 to 5; no opinion = 6 |
+| Too often to never | 1 to 5 |
+| Excellent to poor | 1 to 4 |
+| Excellent to very poor | 1 to 5; no answer = 6 |
+| Yes/no | yes = 1; no = 2; no answer = 3 |
+| Awareness/use | used = 1; aware but not used = 2; unaware = 3 |
+
+In the source file, the middle agreement codes 2-4 are not labelled. Code 3 is also unlabelled for q11, q12, q27, q38, and q13-q26. In addition, q37 labels code 6 as "No Opinion," while the questionnaire defines it as "No answer."
+
+```{r}
+#| label: repair-metadata
+
+five_pt_likert <- c(
+  "Strongly Disagree" = 1,
+  "Disagree" = 2,
+  "Uncertain" = 3,
+  "Agree" = 4,
+  "Strongly Agree" = 5
+)
+
+data_labelled <- data_raw |>
+  mutate(
+    across(c(q3:q6, q30:q34), \(x) set_value_labels(x, five_pt_likert)),
+    across(q13:q26, \(x) add_value_labels(x, "Unaware" = 3)),
+    across(c(q11, q12, q27, q38), \(x) add_value_labels(x, "No answer" = 3)),
+    q37 = set_value_labels(
+      q37,
+      c(
+        "Excellent" = 1,
+        "Good" = 2,
+        "Average" = 3,
+        "Poor" = 4,
+        "Very Poor" = 5,
+        "No answer" = 6
+      )
+    )
+  ) |>
+  set_variable_labels(
+    q8 = "Borrowing rates charged by the Credit Union",
+    q11 = "Statements are easy to understand",
+    q12 = "Account information is kept confidential",
+    q38 = "Lives in the headquarters area",
+    OverallEmployeePerformace = "Precomputed employee proficiency mean (source)",
+    employeeperformance = "Duplicate precomputed employee proficiency mean (source)"
+  )
+
+tibble(
+  variable = c("q8", "q13", "q12", "q37"),
+  revised_variable_label = c(
+    var_label(data_labelled$q8),
+    var_label(data_labelled$q13),
+    var_label(data_labelled$q12),
+    var_label(data_labelled$q37)
+  ),
+  revised_value_labels = c(
+    str_c(names(val_labels(data_labelled$q8)), "=", val_labels(data_labelled$q8), collapse = "; "),
+    str_c(names(val_labels(data_labelled$q13)), "=", val_labels(data_labelled$q13), collapse = "; "),
+    str_c(names(val_labels(data_labelled$q12)), "=", val_labels(data_labelled$q12), collapse = "; "),
+    str_c(names(val_labels(data_labelled$q37)), "=", val_labels(data_labelled$q37), collapse = "; ")
+  )
+) |>
+  gt() |>
+  tab_header(title = "Examples of repaired metadata")
+```
+
+I changed q8 to "Borrowing rates charged by the Credit Union." This matches the questionnaire and makes it different from q9, which is the statement-frequency question.
+
+## Create an analysis copy
+
+The analysis copy keeps variables whose names match a questionnaire item and excludes the two precomputed columns.
+
+```{r}
+#| label: analysis-copy
+
+data <- data_labelled |>
+  select(matches("^q\\d+$"))
+
+tibble(
+  retained_variables = ncol(data),
+  excluded_precomputed_variables = ncol(data_labelled) - ncol(data)
+) |>
+  gt() |>
+  tab_header(title = "Analysis-copy audit")
+```
+
+I did not use the two precomputed variables because I do not know exactly how they were created. Starting from the individual questions lets me check which items belong together and how missing values are handled.
+
+### Data-quality checks
+
+```{r}
+#| label: quality-checks
+
+quality_checks <- data |>
+  mutate(across(everything(), as.numeric)) |>
+  pivot_longer(everything(), names_to = "variable") |>
+  summarise(
+    values_observed = str_c(sort(unique(value[!is.na(value)])), collapse = ", "),
+    n_missing = sum(is.na(value)),
+    percent_missing = round(mean(is.na(value)) * 100, 1),
+    .by = variable
+  )
+
+quality_checks |>
+  gt() |>
+  fmt_number(columns = percent_missing, decimals = 1) |>
+  cols_label(percent_missing = "Missing (%)") |>
+  tab_header(title = "Observed values and missingness")
+```
+
+I did not find values outside the questionnaire's coding ranges. Some possible categories do not appear in the data. For example, q26 has no "Unaware" responses, but that does not necessarily mean the data are wrong. The missing values in q7, q8, and q37 appear to be the special responses converted during import.
+
+## Recode special responses and reverse-code items
+
+### Handle "No Opinion" and "No answer"
+
+```{r}
+#| label: check-special-missing
+
+data |>
+  summarise(across(c(q7, q8, q37), \(x) sum(as.numeric(x) == 6, na.rm = TRUE))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "remaining_code_6") |>
+  gt() |>
+  tab_header(title = "Special-response codes remaining after import")
+```
+
+No code 6 values remain because `read_sav()` converted the SPSS user-missing codes to `NA`. The explicit recode below is retained as a defensive step so that the result remains correct if the source file's missing-value metadata changes.
+
+```{r}
+#| label: recode-special-missing
+
+data <- data |>
+  mutate(across(c(q7, q8, q37), \(x) na_if(x, 6)))
+```
+
+### Reverse coding
+
+q7, q8, and q37 run from favorable at 1 to unfavorable at 5, so they use `6 - original`. q10 runs from 1 to 4, so it uses `5 - original`.
+
+```{r}
+#| label: reverse-code
+
+data <- data |>
+  mutate(
+    q7r = 6 - q7,
+    q8r = 6 - q8,
+    q10r = 5 - q10,
+    q37r = 6 - q37
+  ) |>
+  set_variable_labels(
+    q7r = "Savings rates (reversed: higher = higher rates)",
+    q8r = "Borrowing rates charged (reversed: higher = higher rates)",
+    q10r = "Statement accuracy (reversed: higher = better)",
+    q37r = "Overall management rating (reversed: higher = better)"
+  ) |>
+  set_value_labels(
+    q7r = c("Very Low" = 1, "Low" = 2, "Average" = 3, "High" = 4, "Very High" = 5),
+    q8r = c("Very Low" = 1, "Low" = 2, "Average" = 3, "High" = 4, "Very High" = 5),
+    q10r = c("Poor" = 1, "Fair" = 2, "Good" = 3, "Excellent" = 4),
+    q37r = c("Very Poor" = 1, "Poor" = 2, "Average" = 3, "Good" = 4, "Excellent" = 5)
+  )
+```
+
+#### Questions and answers
+
+A simple reversal does not work for q9 because "About Right" is in the middle of the scale. I recoded it into a yes/no variable where 1 means "About Right" and 0 means another valid response.
+
+I would not normally average q13-q26 because they describe different services and the answers are categories, not ratings from bad to good. It would make more sense to report the percentage in each awareness category for every service. Another possible summary would be a count of how many services each person has used.
+
+```{r}
+#| label: q9-about-right
+
+data <- data |>
+  mutate(
+    q9_about_right = haven::labelled(
+      if_else(as.numeric(q9) == 3, 1, 0),
+      labels = c("No" = 0, "Yes" = 1),
+      label = "Statement frequency was about right"
+    )
+  )
+
+data |>
+  count(q9, q9_about_right) |>
+  gt() |>
+  tab_header(title = "Binary recode of q9")
+```
+
+#### Awareness items treated as an ordinal exercise
+
+The assignment also asks for an exercise that assumes q13-q26 are ordinal. Under that assumption, `4 - original` makes 1 = "Unaware," 2 = "Aware but not used," and 3 = "Aware and used." These exercise variables are kept separately and are not averaged into one index.
+
+```{r}
+#| label: reverse-awareness
+
+data <- data |>
+  mutate(across(q13:q26, \(x) 4 - as.numeric(x), .names = "{.col}r"))
+
+awareness_reversed <- paste0("q", 13:26, "r")
+
+for (variable in awareness_reversed) {
+  data[[variable]] <- haven::labelled(
+    data[[variable]],
+    labels = c("Unaware" = 1, "Aware but not used" = 2, "Aware and used" = 3),
+    label = paste("Ordinal reverse code for", sub("r$", "", variable))
+  )
+}
+
+data |>
+  count(q13, q13r) |>
+  gt() |>
+  tab_header(title = "Example awareness-item reversal")
+```
+
+### Verify the recoding
+
+```{r}
+#| label: verify-recode
+
+recode_check <- bind_rows(
+  data |> count(original = q7, reversed = q7r) |> mutate(variable = "q7"),
+  data |> count(original = q8, reversed = q8r) |> mutate(variable = "q8"),
+  data |> count(original = q10, reversed = q10r) |> mutate(variable = "q10"),
+  data |> count(original = q37, reversed = q37r) |> mutate(variable = "q37")
+) |>
+  select(variable, original, reversed, n)
+
+recode_check |>
+  gt(groupname_col = "variable") |>
+  tab_header(title = "Original and reversed values")
+```
+
+The cross-tabulation confirms that the lowest original value became the highest reversed value, the highest original value became the lowest, and missing values stayed missing. Larger reversed values now consistently indicate a more favorable response.
+
+## Evaluate candidate multi-item measures
+
+Two candidate measures are evaluated: employee proficiency (q3-q6) and operational effectiveness (q30-q34). The analysis uses Cronbach's alpha, corrected item-total correlations, and a one-factor minimum-residual solution.
+
+```{r}
+#| label: reliability-factor-analysis
+
+employee_items <- data |>
+  select(q3:q6) |>
+  mutate(across(everything(), as.numeric))
+
+operations_items <- data |>
+  select(q30:q34) |>
+  mutate(across(everything(), as.numeric))
+
+employee_alpha <- psych::alpha(employee_items, warnings = FALSE)
+operations_alpha <- psych::alpha(operations_items, warnings = FALSE)
+
+employee_fa <- psych::fa(employee_items, nfactors = 1, rotate = "none", fm = "minres")
+operations_fa <- psych::fa(operations_items, nfactors = 1, rotate = "none", fm = "minres")
+
+reliability_summary <- tibble(
+  candidate_measure = c("Employee proficiency", "Operational effectiveness"),
+  items = c("q3-q6", "q30-q34"),
+  raw_alpha = c(employee_alpha$total$raw_alpha, operations_alpha$total$raw_alpha),
+  standardized_alpha = c(employee_alpha$total$std.alpha, operations_alpha$total$std.alpha),
+  average_interitem_r = c(employee_alpha$total$average_r, operations_alpha$total$average_r),
+  one_factor_variance = c(
+    employee_fa$Vaccounted["Proportion Var", 1],
+    operations_fa$Vaccounted["Proportion Var", 1]
+  )
+)
+
+reliability_summary |>
+  gt() |>
+  fmt_number(columns = c(raw_alpha, standardized_alpha, average_interitem_r, one_factor_variance), decimals = 3) |>
+  tab_header(title = "Candidate-measure summary")
+```
+
+```{r}
+#| label: item-diagnostics
+
+employee_diagnostics <- tibble(
+  measure = "Employee proficiency",
+  item = rownames(employee_alpha$item.stats),
+  r_drop = employee_alpha$item.stats$r.drop,
+  factor_loading = as.numeric(unclass(employee_fa$loadings)[, 1]),
+  communality = employee_fa$communality
+)
+
+operations_diagnostics <- tibble(
+  measure = "Operational effectiveness",
+  item = rownames(operations_alpha$item.stats),
+  r_drop = operations_alpha$item.stats$r.drop,
+  factor_loading = as.numeric(unclass(operations_fa$loadings)[, 1]),
+  communality = operations_fa$communality
+)
+
+bind_rows(employee_diagnostics, operations_diagnostics) |>
+  gt(groupname_col = "measure") |>
+  fmt_number(columns = c(r_drop, factor_loading, communality), decimals = 3) |>
+  tab_header(title = "Item-total correlations and one-factor loadings")
+```
+
+### Decision: employee proficiency
+
+Employee proficiency has raw alpha = **0.866**. The item-total correlations range from **0.657 to 0.823**, and the factor loadings range from **0.722 to 0.923**. These results look fairly strong to me. The four questions are also all about employee service, so I decided that it is reasonable to make one employee-proficiency index.
+
+### Decision: operational effectiveness
+
+Operational effectiveness has raw alpha = **0.539**, which is much weaker. The item-total correlations range from **0.216 to 0.483**, and only q32 has a strong factor loading. The questions also cover several different topics. Based on this evidence, I did not create an operational-effectiveness index and kept the questions separate.
+
+### Create the justified index
+
+```{r}
+#| label: create-index
+
+data <- data |>
+  mutate(
+    employee_proficiency_index = rowMeans(pick(q3:q6), na.rm = TRUE),
+    employee_proficiency_index = if_else(
+      is.nan(employee_proficiency_index),
+      NA_real_,
+      employee_proficiency_index
+    )
+  ) |>
+  set_variable_labels(
+    employee_proficiency_index = "Mean employee proficiency rating (q3-q6)"
+  )
+
+data |>
+  summarise(
+    n = sum(!is.na(employee_proficiency_index)),
+    mean = mean(employee_proficiency_index, na.rm = TRUE),
+    sd = sd(employee_proficiency_index, na.rm = TRUE),
+    minimum = min(employee_proficiency_index, na.rm = TRUE),
+    maximum = max(employee_proficiency_index, na.rm = TRUE)
+  ) |>
+  gt() |>
+  fmt_number(columns = c(mean, sd, minimum, maximum), decimals = 2) |>
+  tab_header(title = "Employee-proficiency index summary")
+```
+
+## Data-preparation narrative
+
+::: {.callout-note title="Data Preparation Narrative"}
+I imported the SPSS file with `haven::read_sav()`. It has 128 cases and 34 variables. After looking at the data dictionary and questionnaire, I found that several labels were missing or incomplete. q8 also had the wrong variable label because it repeated q9. I added or corrected these labels based on the questionnaire.
+
+I removed the two precomputed employee-performance variables from my analysis copy because I was not sure how they were made. I did not find any observed values outside the questionnaire's ranges. The code 6 responses for q7, q8, and q37 were already changed to missing values during the import, but I also included a recode step to make sure.
+
+I reverse-coded q7, q8, q10, and q37 and checked the results with cross-tabulations. I did not reverse q9 because its best answer is in the middle. Instead, I made an "About Right" variable. I also made reversed q13r-q26r variables for the exercise, but I did not average them because the questions are about different products.
+
+The q3-q6 employee questions had good reliability, so I created their mean as an employee-proficiency index. The q30-q34 questions had lower reliability, so I left them separate. One limitation is that the sample only has 128 cases and some answer categories have very few or no observations. The factor analysis here is also just a basic first check, so the results should not be generalized too far.
+:::
+
+## Confirm completeness with a final data dictionary
+
+```{r}
+#| label: final-dictionary
+
+final_dictionary <- make_dictionary(data)
+
+final_dictionary |>
+  gt() |>
+  tab_header(title = "Cleaned-data dictionary") |>
+  tab_options(table.font.size = px(11))
+```
+
+## Save the cleaned SPSS file
+
+The exported file includes repaired metadata, verified reverse-coded variables, the q9 indicator, the awareness-item exercise variables, and the supported employee-proficiency index.
+
+```{r}
+#| label: save-spss
+
+data |>
+  write_sav("Case31_JW_cleaned.sav")
+```
+
+## Appendix
+- GitHub Pages :
+- GitHub repository: 
