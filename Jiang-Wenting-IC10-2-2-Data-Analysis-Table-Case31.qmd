@@ -1,0 +1,149 @@
+---
+title: "IC10-2-2 Data Analysis Table"
+subtitle: "Case 31 Employees Federal Credit Union"
+author: "Wenting Jiang"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-overflow: wrap
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+## Purpose
+
+In this report I try to make a data analysis table for Case 31. I used the questionnaire and the cleaned SPSS file from my last assignment. The main idea is to decide which questions and statistical test can be used for each research question.
+
+```{r}
+#| label: setup
+
+library(haven)
+library(dplyr)
+library(tibble)
+library(gt)
+
+case31 <- read_sav("Case31_JW_cleaned.sav")
+
+tibble(
+  cases = nrow(case31),
+  variables = ncol(case31)
+) |>
+  gt() |>
+  tab_header(title = "Cleaned data used for the analysis plan")
+```
+
+## Research questions and hypotheses
+
+The Case 31 assignment gives the following research questions and hypotheses.
+
+1. **R1:** Why do people join the Credit Union?
+2. **R2:** Why do members use other financial institutions when they need to borrow funds?
+3. **R3:** What are the members' attitudes and beliefs about the proficiencies of Credit Union employees?
+4. **R4:** Are there perceived differences in employee proficiency, service awareness, and operational effectiveness between members who live in the headquarters area and members who live elsewhere?
+5. **R5:** How well are members aware of the services offered by the Credit Union?
+6. **R6:** What are the members' attitudes and beliefs about how effectively the Credit Union is operated?
+7. **H1:** Awareness of regular share accounts is associated with opinions about whether current financial services meet members' needs.
+8. **H2:** Members' ratings of the Credit Union's loan rates do not differ from their agreement that its loan rates are lower than competitors' rates.
+
+## A problem I noticed
+
+Q2, Q28, and Q29 are shown in the questionnaire, but I could not find them in the SPSS file. This means I can plan R1 and R2, but I probably cannot actually run them with this file. At first this was a little confusing because the sample table shows Q7 for R1, but Q7 is about savings rates and not why people joined.
+
+## Data analysis table
+
+```{r}
+#| label: analysis-table
+
+analysis_plan <- tribble(
+  ~Question, ~`Constructs and their role`, ~Operationalization, ~Scale, ~`Statistical test or analysis`,
+  "R1",
+  "Reasons for joining the Credit Union (descriptive)",
+  "Q2; each checked reason should be coded as a separate indicator",
+  "Nominal, multiple response",
+  "Frequencies and percentages for each reason",
+
+  "R2",
+  "Use of another lender and reasons for using it (descriptive)",
+  "Q28 identifies outside borrowing; Q29 records the reasons",
+  "Nominal; Q29 is multiple response",
+  "Frequencies and percentages, with Q29 summarized among members who answered yes to Q28",
+
+  "R3",
+  "Attitudes toward employee proficiency (descriptive)",
+  "Q3-Q6; employee_proficiency_index is their mean",
+  "Likert items; index treated as interval",
+  "Descriptive statistics and one-sample t-test against 3",
+
+  "R4a",
+  "Member residence (IV); employee proficiency (DV)",
+  "Q38; employee_proficiency_index",
+  "Residence is nominal; index is interval",
+  "Independent-samples t-test",
+
+  "R4b",
+  "Member residence (IV); awareness of services (DV)",
+  "Q38; Q13r-Q26r",
+  "Residence is nominal; awareness items are ordinal categories",
+  "Two-way cross-tabulations and chi-square tests for each service",
+
+  "R4c",
+  "Member residence (IV); operational effectiveness measures (DV)",
+  "Q38 compared with q9_about_right, Q10r, Q11-Q12, Q31-Q34, and Q37r",
+  "Q38 and binary items are nominal; rating items are treated as interval",
+  "Chi-square for binary items; independent-samples t-tests for rating items",
+
+  "R5",
+  "Awareness and use of Credit Union services (descriptive)",
+  "Q13r-Q26r, reported separately for each service",
+  "Ordinal: unaware, aware but not used, and aware and used",
+  "Frequencies, percentages, and cross-tabulation by service",
+
+  "R6",
+  "Attitudes toward operational effectiveness (descriptive)",
+  "q9_about_right, Q10r, Q11-Q12, Q31-Q34, and Q37r",
+  "Mix of nominal and Likert-type rating variables",
+  "Frequencies for nominal items and means and standard deviations for rating items",
+
+  "H1",
+  "Regular-share-account awareness (IV); services meet members' needs (DV)",
+  "Q13r; Q33",
+  "Q13r is ordinal; Q33 is a Likert-type rating treated as interval",
+  "Spearman rank-order correlation",
+
+  "H2",
+  "Perceived loan rate (paired measure 1); agreement that rates are lower than competitors (paired measure 2)",
+  "Q8r; Q30",
+  "Both are five-point ratings treated as interval",
+  "Paired-samples t-test using complete pairs"
+)
+
+analysis_plan |>
+  gt() |>
+  tab_header(title = "Data Analysis Table for Case 31")
+```
+
+## Short explanation of the decisions
+
+For R3 and R4a, I used the employee proficiency index from the last assignment. Q3-Q6 seemed to measure about the same thing and the reliability was good. For the operational questions in R6, I kept the questions separate because the reliability was not very good.
+
+For R4, the people living near headquarters and the people living somewhere else are two different groups. I think an independent t-test makes sense for the rating scores. For awareness and yes/no answers, I chose cross-tabs and chi-square because they are categories.
+
+For H1, I selected Spearman correlation because Q13r is ordered. I was not completely sure if regression could also be used, but Spearman seems simpler here. For H2, each person answered both Q8 and Q30, so I used a paired t-test.
+
+## Limitations
+
+The data only has 128 cases and some answers are missing. Also, Q2, Q28, and Q29 are not in the data, so R1 and R2 cannot really be tested with this file. Some chi-square tables may also have small groups. These are problems I would need to check if I run the analysis later.
+
+## Appendix
+
+GitHub Pages
+
+GitHub repository
